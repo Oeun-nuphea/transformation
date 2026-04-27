@@ -1,15 +1,40 @@
 /**
- * Generate a CSV from plain text (one row per line) and trigger download.
+ * Generate a CSV from text and trigger download.
  *
- * Each line becomes a single-column row. Values are quoted to handle
- * commas and special characters safely.
+ * Strategy:
+ * - If the text contains markdown tables (| col | col |), extract those as CSV rows.
+ * - Otherwise, treat each line as a single-column row with proper escaping.
  */
 export function generateCsv(text: string, filename: string): void {
-  const rows = text.split("\n");
+  const lines = text.split("\n");
 
-  const csvContent = rows
-    .map((row) => `"${row.replace(/"/g, '""')}"`)
-    .join("\n");
+  // ── Detect if text has markdown tables ─────────────────
+  const tableLines = lines.filter(
+    (l) =>
+      l.trim().startsWith("|") &&
+      l.trim().endsWith("|") &&
+      !/^\|[\s\-:|]+\|$/.test(l.trim()) // skip separator rows
+  );
+
+  let csvContent: string;
+
+  if (tableLines.length >= 2) {
+    // Extract table data into proper CSV
+    csvContent = tableLines
+      .map((line) =>
+        line
+          .split("|")
+          .filter((c) => c !== "")
+          .map((cell) => escapeCell(stripInlineMarkdown(cell.trim())))
+          .join(",")
+      )
+      .join("\n");
+  } else {
+    // Fallback: one row per line, strip markdown formatting
+    csvContent = lines
+      .map((line) => escapeCell(stripInlineMarkdown(line)))
+      .join("\n");
+  }
 
   const blob = new Blob(["\uFEFF" + csvContent], {
     type: "text/csv;charset=utf-8;",
@@ -23,9 +48,24 @@ export function generateCsv(text: string, filename: string): void {
   document.body.appendChild(link);
   link.click();
 
-  // Cleanup
   setTimeout(() => {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   }, 100);
+}
+
+/** Escape a cell value for CSV: wrap in quotes, double internal quotes. */
+function escapeCell(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+/** Strip inline markdown tokens for clean CSV text. */
+function stripInlineMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/`(.+?)`/g, "$1")
+    .replace(/\[(.+?)\]\(.+?\)/g, "$1")
+    .replace(/~~(.+?)~~/g, "$1")
+    .replace(/^#{1,6}\s+/, ""); // strip heading markers
 }
